@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>Page Pulse</title>
+    <link rel="stylesheet" href="{{url_for('static',filename='style.css')}}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Page Pulse</h1>
+        <p class="subtitle">Analyze any website in seconds.</p>
+        <div class="inputBox">
+            <i class="fa-solid fa-link"></i>
+            <input type="text" id="url" placeholder="https://example.com">
+        </div>
+    <button onclick="audit()"><i class="fa-solid fa-magnifying-glass"></i>Audit Website</button>
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>Analyzing website...</p>
+    </div>
+    <div id="result"></div>
+    <footer>
+        Built for
+        <a href="https://digitalheroesco.com/" target="_blank">Digital Heroes Training Task</a>
+    </footer>
+    </div>
+
+<script src="{{url_for('static',filename='script.js')}}"></script>
+
+</body>
+</html>
+</html>

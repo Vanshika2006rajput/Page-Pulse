@@ -1,34 +1,1037 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
     <title>Page Pulse</title>
-    <link rel="stylesheet" href="{{url_for('static',filename='style.css')}}">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+
+    <link
+        rel="preconnect"
+        href="https://fonts.googleapis.com"
+    >
+
+    <link
+        rel="preconnect"
+        href="https://fonts.googleapis.com"
+        crossorigin
+    >
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet"
+    >
+
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
 </head>
+
 <body>
-    <div class="container">
-        <h1>Page Pulse</h1>
-        <p class="subtitle">Analyze any website in seconds.</p>
-        <div class="inputBox">
-            <i class="fa-solid fa-link"></i>
-            <input type="text" id="url" placeholder="https://example.com">
-        </div>
-    <button onclick="audit()"><i class="fa-solid fa-magnifying-glass"></i>Audit Website</button>
-    <div id="loading" class="loading">
-        <div class="spinner"></div>
-        <p>Analyzing website...</p>
-    </div>
-    <div id="result"></div>
-    <footer>
-        Built for
-        User to Experience Page Pulse.
-    </footer>
+
+    <div class="app-shell">
+
+        <header class="topbar">
+
+            <div class="brand">
+
+                <div class="brand-icon">
+                    <i class="fa-solid fa-wave-square"></i>
+                </div>
+
+                <div>
+                    <h1>Page Pulse</h1>
+
+                    <span>
+                        Website Monitoring Platform
+                    </span>
+                </div>
+
+            </div>
+
+            <div class="topbar-actions">
+
+                <button
+                    id="refreshDashboardButton"
+                    class="secondary-button"
+                    type="button"
+                >
+                    <i class="fa-solid fa-rotate"></i>
+                    Refresh
+                </button>
+
+                <button
+                    id="addWebsiteButton"
+                    class="primary-button"
+                    type="button"
+                >
+                    <i class="fa-solid fa-plus"></i>
+                    Add Website
+                </button>
+
+            </div>
+
+        </header>
+
+        <main class="dashboard">
+
+            <section class="hero-section">
+
+                <div>
+
+                    <span class="section-eyebrow">
+                        MONITORING DASHBOARD
+                    </span>
+
+                    <h2>
+                        Website Health Overview
+                    </h2>
+
+                    <p>
+                        Monitor availability, performance and website health from one centralized dashboard.
+                    </p>
+
+                </div>
+
+            </section>
+
+            <section class="stats-grid">
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        <i class="fa-solid fa-globe"></i>
+                    </div>
+
+                    <div>
+                        <span>Total Websites</span>
+
+                        <strong id="totalWebsites">
+                            0
+                        </strong>
+                    </div>
+
+                </div>
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        <i class="fa-solid fa-circle-check"></i>
+                    </div>
+
+                    <div>
+                        <span>Operational</span>
+
+                        <strong id="upWebsites">
+                            0
+                        </strong>
+                    </div>
+
+                </div>
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        <i class="fa-solid fa-circle-xmark"></i>
+                    </div>
+
+                    <div>
+                        <span>Down</span>
+
+                        <strong id="downWebsites">
+                            0
+                        </strong>
+                    </div>
+
+                </div>
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        <i class="fa-solid fa-bolt"></i>
+                    </div>
+
+                    <div>
+                        <span>Average Response</span>
+
+                        <strong id="averageResponse">
+                            0 ms
+                        </strong>
+                    </div>
+
+                </div>
+
+            </section>
+
+            <section class="incident-dashboard-section">
+
+                <div class="section-heading">
+
+                    <div>
+
+                        <span class="section-eyebrow">
+                            INCIDENT MANAGEMENT
+                        </span>
+
+                        <h2>
+                            Incident Dashboard
+                        </h2>
+
+                        <p>
+                            Track website failures, active incidents and service recovery events.
+                        </p>
+
+                    </div>
+
+                    <div class="incident-live-indicator">
+                        <span class="incident-live-dot"></span>
+                        Automatic Monitoring
+                    </div>
+
+                </div>
+
+                <div class="incident-summary-grid">
+
+                    <div class="incident-summary-card incident-open-card">
+
+                        <div class="incident-summary-icon">
+                            <i class="fa-solid fa-triangle-exclamation"></i>
+                        </div>
+
+                        <div>
+
+                            <span>
+                                Open Incidents
+                            </span>
+
+                            <strong id="openIncidentCount">
+                                0
+                            </strong>
+
+                        </div>
+
+                    </div>
+
+                    <div class="incident-summary-card incident-resolved-card">
+
+                        <div class="incident-summary-icon">
+                            <i class="fa-solid fa-circle-check"></i>
+                        </div>
+
+                        <div>
+
+                            <span>
+                                Resolved Incidents
+                            </span>
+
+                            <strong id="resolvedIncidentCount">
+                                0
+                            </strong>
+
+                        </div>
+
+                    </div>
+
+                    <div class="incident-summary-card">
+
+                        <div class="incident-summary-icon">
+                            <i class="fa-solid fa-layer-group"></i>
+                        </div>
+
+                        <div>
+
+                            <span>
+                                Total Incidents
+                            </span>
+
+                            <strong id="totalIncidentCount">
+                                0
+                            </strong>
+
+                        </div>
+
+                    </div>
+
+                    <div class="incident-summary-card">
+
+                        <div class="incident-summary-icon">
+                            <i class="fa-solid fa-shield-heart"></i>
+                        </div>
+
+                        <div>
+
+                            <span>
+                                Current Status
+                            </span>
+
+                            <strong id="incidentSystemStatus">
+                                Healthy
+                            </strong>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <div class="incident-table-card">
+
+                    <div class="incident-table-header">
+
+                        <div>
+
+                            <span class="section-eyebrow">
+                                RECENT INCIDENTS
+                            </span>
+
+                            <h3>
+                                Incident History
+                            </h3>
+
+                        </div>
+
+                        <span
+                            id="incidentRefreshTime"
+                            class="incident-refresh-time"
+                        >
+                            —
+                        </span>
+
+                    </div>
+
+                    <div
+                        id="incidentEmptyState"
+                        class="incident-empty-state"
+                    >
+
+                        <i class="fa-solid fa-shield-check"></i>
+
+                        <h3>
+                            No incidents detected
+                        </h3>
+
+                        <p>
+                            All monitored websites are currently operating normally.
+                        </p>
+
+                    </div>
+
+                    <div
+                        id="incidentTableWrapper"
+                        class="incident-table-wrapper"
+                        style="display: none;"
+                    >
+
+                        <table class="incident-table">
+
+                            <thead>
+
+                                <tr>
+                                    <th>Website</th>
+                                    <th>Status</th>
+                                    <th>Reason</th>
+                                    <th>Started</th>
+                                    <th>Resolved</th>
+                                    <th>Duration</th>
+                                </tr>
+
+                            </thead>
+
+                            <tbody id="incidentTableBody">
+                            </tbody>
+
+                        </table>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+            <section class="section-block">
+
+                <div class="section-heading">
+
+                    <div>
+
+                        <span class="section-eyebrow">
+                            MONITORED WEBSITES
+                        </span>
+
+                        <h2>
+                            Website Status
+                        </h2>
+
+                        <p>
+                            Live monitoring information for your configured websites.
+                        </p>
+
+                    </div>
+
+                </div>
+
+                <div
+                    id="websiteGrid"
+                    class="website-grid"
+                >
+                </div>
+
+            </section>
+
+            <section class="history-section">
+
+                <div class="section-heading">
+
+                    <div>
+
+                        <span class="section-eyebrow">
+                            MONITORING HISTORY
+                        </span>
+
+                        <h2>
+                            Website Performance
+                        </h2>
+
+                        <p>
+                            Review response-time trends and recent monitoring checks.
+                        </p>
+
+                    </div>
+
+                    <div class="history-selector">
+
+                        <label for="historyWebsiteSelect">
+                            Website
+                        </label>
+
+                        <select id="historyWebsiteSelect">
+
+                            <option value="">
+                                Select a website
+                            </option>
+
+                        </select>
+
+                    </div>
+
+                </div>
+
+                <div
+                    id="historyEmptyState"
+                    class="history-empty-state"
+                >
+
+                    <i class="fa-solid fa-chart-line"></i>
+
+                    <h3>
+                        Select a website
+                    </h3>
+
+                    <p>
+                        Choose a monitored website to view its performance history.
+                    </p>
+
+                </div>
+
+                <div
+                    id="historyPanel"
+                    class="history-panel"
+                    style="display: none;"
+                >
+
+                    <div class="history-summary">
+
+                        <div class="history-summary-card">
+
+                            <span>Health Score</span>
+
+                            <strong id="historyHealthScore">
+                                —
+                            </strong>
+
+                        </div>
+
+                        <div class="history-summary-card">
+
+                            <span>Uptime</span>
+
+                            <strong id="historyUptime">
+                                —
+                            </strong>
+
+                        </div>
+
+                        <div class="history-summary-card">
+
+                            <span>Avg Response</span>
+
+                            <strong id="historyAverageResponse">
+                                —
+                            </strong>
+
+                        </div>
+
+                        <div class="history-summary-card">
+
+                            <span>Checks</span>
+
+                            <strong id="historyTotalChecks">
+                                —
+                            </strong>
+
+                        </div>
+
+                    </div>
+
+                    <div class="history-chart-card">
+
+                        <div class="history-chart-header">
+
+                            <div>
+
+                                <span class="section-eyebrow">
+                                    RESPONSE TIME
+                                </span>
+
+                                <h3>
+                                    Performance Trend
+                                </h3>
+
+                            </div>
+
+                            <span
+                                id="historyHealthStatus"
+                                class="history-status"
+                            >
+                                —
+                            </span>
+
+                        </div>
+
+                        <div class="history-chart-container">
+
+                            <svg
+                                id="responseHistoryChart"
+                                viewBox="0 0 900 320"
+                                preserveAspectRatio="none"
+                                aria-label="Response time history chart"
+                            >
+                            </svg>
+
+                        </div>
+
+                    </div>
+
+                    <div class="history-table-card">
+
+                        <div class="history-chart-header">
+
+                            <div>
+
+                                <span class="section-eyebrow">
+                                    RECENT CHECKS
+                                </span>
+
+                                <h3>
+                                    Monitoring Activity
+                                </h3>
+
+                            </div>
+
+                        </div>
+
+                        <div class="history-table-wrapper">
+
+                            <table class="history-table">
+
+                                <thead>
+
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Status</th>
+                                        <th>HTTP</th>
+                                        <th>Response</th>
+                                        <th>Size</th>
+                                        <th>Redirects</th>
+                                    </tr>
+
+                                </thead>
+
+                                <tbody id="historyTableBody">
+                                </tbody>
+
+                            </table>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+            <section class="analysis-section">
+
+                <div class="section-heading">
+
+                    <div>
+
+                        <span class="section-eyebrow">
+                            WEBSITE QUALITY
+                        </span>
+
+                        <h2>
+                            Website Analysis
+                        </h2>
+
+                        <p>
+                            Analyze SEO, accessibility, technical quality and content health.
+                        </p>
+
+                    </div>
+
+                    <div class="analysis-selector">
+
+                        <label for="analysisWebsiteSelect">
+                            Website
+                        </label>
+
+                        <select id="analysisWebsiteSelect">
+
+                            <option value="">
+                                Select a website
+                            </option>
+
+                        </select>
+
+                        <button
+                            id="analyzeWebsiteButton"
+                            class="primary-button"
+                            type="button"
+                        >
+                            <i class="fa-solid fa-magnifying-glass-chart"></i>
+                            Analyze Website
+                        </button>
+
+                    </div>
+
+                </div>
+
+                <div
+                    id="analysisEmptyState"
+                    class="analysis-empty-state"
+                >
+
+                    <i class="fa-solid fa-chart-pie"></i>
+
+                    <h3>
+                        Ready to analyze
+                    </h3>
+
+                    <p>
+                        Select a monitored website and run a website quality analysis.
+                    </p>
+
+                </div>
+
+                <div
+                    id="analysisPanel"
+                    class="analysis-panel"
+                    style="display: none;"
+                >
+
+                    <div class="analysis-overview">
+
+                        <div class="analysis-score-card">
+
+                            <span class="section-eyebrow">
+                                OVERALL QUALITY
+                            </span>
+
+                            <div class="analysis-score">
+
+                                <strong id="analysisOverallScore">
+                                    —
+                                </strong>
+
+                                <span>
+                                    / 100
+                                </span>
+
+                            </div>
+
+                            <div
+                                id="analysisQualityStatus"
+                                class="analysis-quality-status"
+                            >
+                                —
+                            </div>
+
+                        </div>
+
+                        <div class="analysis-category-card">
+
+                            <div class="analysis-category-header">
+
+                                <span>SEO</span>
+
+                                <strong id="analysisSeoScore">
+                                    —
+                                </strong>
+
+                            </div>
+
+                            <div class="analysis-progress">
+                                <span id="analysisSeoProgress"></span>
+                            </div>
+
+                        </div>
+
+                        <div class="analysis-category-card">
+
+                            <div class="analysis-category-header">
+
+                                <span>
+                                    Accessibility
+                                </span>
+
+                                <strong id="analysisAccessibilityScore">
+                                    —
+                                </strong>
+
+                            </div>
+
+                            <div class="analysis-progress">
+                                <span id="analysisAccessibilityProgress"></span>
+                            </div>
+
+                        </div>
+
+                        <div class="analysis-category-card">
+
+                            <div class="analysis-category-header">
+
+                                <span>
+                                    Technical
+                                </span>
+
+                                <strong id="analysisTechnicalScore">
+                                    —
+                                </strong>
+
+                            </div>
+
+                            <div class="analysis-progress">
+                                <span id="analysisTechnicalProgress"></span>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                    <div class="analysis-content-card">
+
+                        <div class="analysis-card-header">
+
+                            <div>
+
+                                <span class="section-eyebrow">
+                                    CONTENT
+                                </span>
+
+                                <h3>
+                                    Content Overview
+                                </h3>
+
+                            </div>
+
+                        </div>
+
+                        <div class="content-metrics">
+
+                            <div class="content-metric">
+                                <span>Words</span>
+                                <strong id="analysisWordCount">—</strong>
+                            </div>
+
+                            <div class="content-metric">
+                                <span>H1</span>
+                                <strong id="analysisH1Count">—</strong>
+                            </div>
+
+                            <div class="content-metric">
+                                <span>H2</span>
+                                <strong id="analysisH2Count">—</strong>
+                            </div>
+
+                            <div class="content-metric">
+                                <span>Images</span>
+                                <strong id="analysisImageCount">—</strong>
+                            </div>
+
+                            <div class="content-metric">
+                                <span>Missing Alt</span>
+                                <strong id="analysisImagesWithoutAlt">—</strong>
+                            </div>
+
+                            <div class="content-metric">
+                                <span>Links</span>
+                                <strong id="analysisLinkCount">—</strong>
+                            </div>
+
+                            <div class="content-metric">
+                                <span>Empty Links</span>
+                                <strong id="analysisEmptyLinks">—</strong>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                    <div class="analysis-checks-grid">
+
+                        <div class="analysis-check-card">
+
+                            <div class="analysis-card-header">
+
+                                <div>
+
+                                    <span class="section-eyebrow">
+                                        SEO
+                                    </span>
+
+                                    <h3>
+                                        Search Optimization
+                                    </h3>
+
+                                </div>
+
+                            </div>
+
+                            <div
+                                id="seoChecks"
+                                class="analysis-check-list"
+                            >
+                            </div>
+
+                        </div>
+
+                        <div class="analysis-check-card">
+
+                            <div class="analysis-card-header">
+
+                                <div>
+
+                                    <span class="section-eyebrow">
+                                        ACCESSIBILITY
+                                    </span>
+
+                                    <h3>
+                                        Accessibility Checks
+                                    </h3>
+
+                                </div>
+
+                            </div>
+
+                            <div
+                                id="accessibilityChecks"
+                                class="analysis-check-list"
+                            >
+                            </div>
+
+                        </div>
+
+                        <div class="analysis-check-card">
+
+                            <div class="analysis-card-header">
+
+                                <div>
+
+                                    <span class="section-eyebrow">
+                                        TECHNICAL
+                                    </span>
+
+                                    <h3>
+                                        Technical Checks
+                                    </h3>
+
+                                </div>
+
+                            </div>
+
+                            <div
+                                id="technicalChecks"
+                                class="analysis-check-list"
+                            >
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+            <section class="section-block activity-section">
+
+                <div class="section-heading">
+
+                    <div>
+
+                        <span class="section-eyebrow">
+                            RECENT ACTIVITY
+                        </span>
+
+                        <h2>
+                            Monitoring Activity
+                        </h2>
+
+                        <p>
+                            Latest website monitoring events.
+                        </p>
+
+                    </div>
+
+                </div>
+
+                <div
+                    id="activityList"
+                    class="activity-list"
+                >
+                </div>
+
+            </section>
+
+        </main>
+
     </div>
 
-<script src="{{url_for('static',filename='script.js')}}"></script>
+    <div
+        id="websiteModal"
+        class="modal"
+        style="display: none;"
+    >
+
+        <div class="modal-content">
+
+            <div class="modal-header">
+
+                <div>
+
+                    <span
+                        id="modalEyebrow"
+                        class="section-eyebrow"
+                    >
+                        MONITORING SETUP
+                    </span>
+
+                    <h2 id="modalTitle">
+                        Add Website
+                    </h2>
+
+                </div>
+
+                <button
+                    id="closeWebsiteModalButton"
+                    class="modal-close"
+                    type="button"
+                >
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+
+            </div>
+
+            <form id="websiteForm">
+
+                <div class="form-group">
+
+                    <label for="websiteName">
+                        Website Name
+                    </label>
+
+                    <input
+                        id="websiteName"
+                        type="text"
+                        placeholder="Example Website"
+                        autocomplete="off"
+                    >
+
+                </div>
+
+                <div class="form-group">
+
+                    <label for="websiteUrl">
+                        Website URL
+                    </label>
+
+                    <input
+                        id="websiteUrl"
+                        type="text"
+                        placeholder="https://example.com"
+                        autocomplete="off"
+                    >
+
+                </div>
+
+                <div
+                    id="formMessage"
+                    class="form-message"
+                    style="display: none;"
+                >
+                </div>
+
+                <div class="modal-actions">
+
+                    <button
+                        class="secondary-button"
+                        type="button"
+                        id="cancelWebsiteButton"
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                        class="primary-button"
+                        type="submit"
+                    >
+
+                        <i
+                            id="modalButtonIcon"
+                            class="fa-solid fa-plus"
+                        ></i>
+
+                        <span id="modalButtonText">
+                            Add Website
+                        </span>
+
+                    </button>
+
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+
+    <script
+        src="{{ url_for('static', filename='script.js') }}?v=7"
+        defer
+    ></script>
 
 </body>
-</html>
+
 </html>

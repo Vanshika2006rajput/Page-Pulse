@@ -19,11 +19,19 @@ DATABASE_PATH = BASE_DIR / "pagepulse.db"
 
 database_url = os.environ.get("DATABASE_URL", "").strip()
 
+
 if database_url:
     if database_url.startswith("postgres://"):
         database_url = database_url.replace(
             "postgres://",
             "postgresql://",
+            1
+        )
+
+    if database_url.startswith("postgresql://"):
+        database_url = database_url.replace(
+            "postgresql://",
+            "postgresql+psycopg2://",
             1
         )
 

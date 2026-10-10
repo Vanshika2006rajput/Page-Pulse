@@ -1,6 +1,8 @@
+
 from flask import Flask, render_template, request, jsonify
 import requests
 import time
+import os
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from pathlib import Path
@@ -15,7 +17,22 @@ app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "pagepulse.db"
 
-app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DATABASE_PATH}"
+database_url = os.environ.get("DATABASE_URL", "").strip()
+
+if database_url:
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace(
+            "postgres://",
+            "postgresql://",
+            1
+        )
+
+    app.config["SQLALCHEMY_DATABASE_URI"] = database_url
+else:
+    app.config["SQLALCHEMY_DATABASE_URI"] = (
+        f"sqlite:///{DATABASE_PATH}"
+    )
+
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db.init_app(app)
@@ -23,6 +40,18 @@ db.init_app(app)
 from models.website import Website
 from models.monitoring import MonitoringCheck
 from models.incident import Incident
+
+
+_database_initialized = False
+
+
+@app.before_request
+def initialize_database():
+    global _database_initialized
+
+    if not _database_initialized:
+        db.create_all()
+        _database_initialized = True
 
 
 @app.route("/")

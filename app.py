@@ -8,19 +8,19 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, render_template, request, jsonify
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from extensions import db
 from services.website_analyzer import analyze_website
 from scheduler import start_scheduler
 
 
-app = Flask(__name__)
+# --------------------------------------------------
+# App configuration
+# --------------------------------------------------
 
-# --------------------------------------------------
-# DATABASE CONFIGURATION
-# PostgreSQL (Neon) on Vercel
-# SQLite for local development
-# --------------------------------------------------
+app = Flask(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "pagepulse.db"
@@ -28,8 +28,7 @@ DATABASE_PATH = BASE_DIR / "pagepulse.db"
 database_url = os.environ.get("DATABASE_URL", "").strip()
 
 if database_url:
-    # Explicitly select psycopg2 so SQLAlchemy does not
-    # attempt to import the missing psycopg (version 3) driver.
+    # Use psycopg2 explicitly to avoid the missing psycopg driver error.
     if database_url.startswith("postgres://"):
         database_url = database_url.replace(
             "postgres://",
@@ -50,39 +49,94 @@ if database_url:
         )
 
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url
+
 else:
+    # SQLite is for local development only.
+    if os.environ.get("VERCEL"):
+        raise RuntimeError(
+            "DATABASE_URL is missing in the Vercel environment."
+        )
+
     app.config["SQLALCHEMY_DATABASE_URI"] = (
-        f"sqlite:///{DATABASE_PATH}"
+        f"sqlite:///{DATABASE_PATH.as_posix()}"
     )
 
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
+# Prevent excessive idle connections in serverless deployments.
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_size": 2,
+    "max_overflow": 0,
+    "pool_recycle": 300,
+}
+
 db.init_app(app)
 
 
-# Import models after initializing the SQLAlchemy extension.
+# Import models so SQLAlchemy knows all table definitions.
 from models.website import Website
 from models.monitoring import MonitoringCheck
 from models.incident import Incident
 
 
-# Initialize tables on the first request handled by this process.
-# This is important because Vercel imports the Flask app without
-# executing the __main__ section.
-_database_initialized = False
+# --------------------------------------------------
+# Helpers
+# --------------------------------------------------
+
+def normalize_url(value):
+    """Normalize and validate a website URL."""
+    if not isinstance(value, str):
+        return None
+
+    url = value.strip()
+
+    if not url:
+        return None
+
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    parsed = urlparse(url)
+
+    if (
+        parsed.scheme not in ("http", "https")
+        or not parsed.hostname
+        or any(char.isspace() for char in url)
+    ):
+        return None
+
+    return url
 
 
-@app.before_request
-def initialize_database():
-    global _database_initialized
+def website_to_dict(website):
+    return {
+        "id": website.id,
+        "name": website.name,
+        "url": website.url,
+        "active": website.active,
+        "createdAt": website.created_at.isoformat()
+    }
 
-    if not _database_initialized:
-        db.create_all()
-        _database_initialized = True
+
+def check_to_dict(check):
+    return {
+        "id": check.id,
+        "websiteId": check.website_id,
+        "statusCode": check.status_code,
+        "responseTime": check.response_time,
+        "responseSize": check.response_size,
+        "redirectCount": check.redirect_count,
+        "contentType": check.content_type,
+        "server": check.server,
+        "errorMessage": check.error_message,
+        "isUp": check.is_up,
+        "checkedAt": check.checked_at.isoformat()
+    }
 
 
 # --------------------------------------------------
-# HOME
+# Home and health
 # --------------------------------------------------
 
 @app.route("/")
@@ -90,98 +144,106 @@ def home():
     return render_template("index.html")
 
 
+@app.route("/health", methods=["GET"])
+def health():
+    """Check whether the app can connect to its configured database."""
+    try:
+        db.session.execute(text("SELECT 1"))
+        return jsonify({
+            "status": "ok",
+            "database": "connected"
+        }), 200
+
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Database health check failed")
+
+        return jsonify({
+            "status": "error",
+            "database": "unavailable"
+        }), 503
+
+
 # --------------------------------------------------
-# CREATE WEBSITE
+# Website CRUD
 # --------------------------------------------------
 
 @app.route("/api/websites", methods=["POST"])
 def create_website():
     data = request.get_json(silent=True) or {}
 
-    name = data.get("name", "").strip()
-    url = data.get("url", "").strip()
+    name = data.get("name", "")
+    url_input = data.get("url", "")
 
-    if not name:
+    if not isinstance(name, str) or not name.strip():
         return jsonify({
             "error": "Website name is required."
         }), 400
 
-    if not url:
+    if not isinstance(url_input, str) or not url_input.strip():
         return jsonify({
             "error": "Website URL is required."
         }), 400
 
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    name = name.strip()
+    url = normalize_url(url_input)
 
-    parsed_url = urlparse(url)
-
-    if not parsed_url.netloc:
+    if not url:
         return jsonify({
             "error": "Please enter a valid website URL."
         }), 400
 
-    existing_website = Website.query.filter_by(
-        url=url
-    ).first()
+    try:
+        existing = Website.query.filter_by(url=url).first()
 
-    if existing_website:
+        if existing:
+            return jsonify({
+                "error": "This website is already being monitored."
+            }), 409
+
+        website = Website(name=name, url=url)
+
+        db.session.add(website)
+        db.session.commit()
+
         return jsonify({
-            "error": "This website is already being monitored."
-        }), 409
+            "message": "Website added successfully.",
+            "website": website_to_dict(website)
+        }), 201
 
-    website = Website(
-        name=name,
-        url=url
-    )
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Could not create website")
 
-    db.session.add(website)
-    db.session.commit()
+        return jsonify({
+            "error": "Could not save the website. Check the database configuration and schema."
+        }), 500
 
-    return jsonify({
-        "message": "Website added successfully.",
-        "website": {
-            "id": website.id,
-            "name": website.name,
-            "url": website.url,
-            "active": website.active,
-            "createdAt": website.created_at.isoformat()
-        }
-    }), 201
-
-
-# --------------------------------------------------
-# GET ALL WEBSITES
-# --------------------------------------------------
 
 @app.route("/api/websites", methods=["GET"])
 def get_websites():
-    websites = Website.query.order_by(
-        Website.created_at.desc()
-    ).all()
+    try:
+        websites = Website.query.order_by(
+            Website.created_at.desc()
+        ).all()
 
-    return jsonify({
-        "websites": [
-            {
-                "id": website.id,
-                "name": website.name,
-                "url": website.url,
-                "active": website.active,
-                "createdAt": website.created_at.isoformat()
-            }
-            for website in websites
-        ]
-    })
+        return jsonify({
+            "websites": [
+                website_to_dict(website)
+                for website in websites
+            ]
+        })
+
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Could not retrieve websites")
+
+        return jsonify({
+            "error": "Could not retrieve websites. Check the database schema and connection."
+        }), 500
 
 
-# --------------------------------------------------
-# GET ONE WEBSITE
-# --------------------------------------------------
-
-@app.route(
-    "/api/websites/<int:website_id>",
-    methods=["GET"]
-)
+@app.route("/api/websites/<int:website_id>", methods=["GET"])
 def get_website(website_id):
     website = db.session.get(Website, website_id)
 
@@ -191,48 +253,11 @@ def get_website(website_id):
         }), 404
 
     return jsonify({
-        "website": {
-            "id": website.id,
-            "name": website.name,
-            "url": website.url,
-            "active": website.active,
-            "createdAt": website.created_at.isoformat()
-        }
+        "website": website_to_dict(website)
     })
 
 
-# --------------------------------------------------
-# DELETE WEBSITE
-# --------------------------------------------------
-
-@app.route(
-    "/api/websites/<int:website_id>",
-    methods=["DELETE"]
-)
-def delete_website(website_id):
-    website = db.session.get(Website, website_id)
-
-    if not website:
-        return jsonify({
-            "error": "Website not found."
-        }), 404
-
-    db.session.delete(website)
-    db.session.commit()
-
-    return jsonify({
-        "message": "Website deleted successfully."
-    })
-
-
-# --------------------------------------------------
-# UPDATE WEBSITE
-# --------------------------------------------------
-
-@app.route(
-    "/api/websites/<int:website_id>",
-    methods=["PUT"]
-)
+@app.route("/api/websites/<int:website_id>", methods=["PUT"])
 def update_website(website_id):
     website = db.session.get(Website, website_id)
 
@@ -243,77 +268,109 @@ def update_website(website_id):
 
     data = request.get_json(silent=True) or {}
 
-    name = data.get("name", "").strip()
-    url = data.get("url", "").strip()
+    name = data.get("name", "")
+    url_input = data.get("url", "")
 
-    if not name:
+    if not isinstance(name, str) or not name.strip():
         return jsonify({
             "error": "Website name is required."
         }), 400
 
-    if not url:
+    if not isinstance(url_input, str) or not url_input.strip():
         return jsonify({
             "error": "Website URL is required."
         }), 400
 
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = normalize_url(url_input)
 
-    parsed_url = urlparse(url)
-
-    if not parsed_url.netloc:
+    if not url:
         return jsonify({
             "error": "Please enter a valid website URL."
         }), 400
 
-    existing_website = Website.query.filter(
+    existing = Website.query.filter(
         Website.url == url,
         Website.id != website_id
     ).first()
 
-    if existing_website:
+    if existing:
         return jsonify({
             "error": "Another website is already using this URL."
         }), 409
 
-    website.name = name
-    website.url = url
+    try:
+        website.name = name.strip()
+        website.url = url
 
-    db.session.commit()
+        db.session.commit()
 
-    return jsonify({
-        "message": "Website updated successfully.",
-        "website": {
-            "id": website.id,
-            "name": website.name,
-            "url": website.url,
-            "active": website.active,
-            "createdAt": website.created_at.isoformat()
-        }
-    })
+        return jsonify({
+            "message": "Website updated successfully.",
+            "website": website_to_dict(website)
+        })
+
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Could not update website")
+
+        return jsonify({
+            "error": "Could not update the website."
+        }), 500
+
+
+@app.route("/api/websites/<int:website_id>", methods=["DELETE"])
+def delete_website(website_id):
+    website = db.session.get(Website, website_id)
+
+    if not website:
+        return jsonify({
+            "error": "Website not found."
+        }), 404
+
+    try:
+        # Delete dependent rows first in case the models don't
+        # define database-level cascading deletes.
+        MonitoringCheck.query.filter_by(
+            website_id=website.id
+        ).delete(synchronize_session=False)
+
+        Incident.query.filter_by(
+            website_id=website.id
+        ).delete(synchronize_session=False)
+
+        db.session.delete(website)
+        db.session.commit()
+
+        return jsonify({
+            "message": "Website deleted successfully."
+        })
+
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Could not delete website")
+
+        return jsonify({
+            "error": "Could not delete the website."
+        }), 500
 
 
 # --------------------------------------------------
-# WEBSITE AUDIT
+# Website audit
 # --------------------------------------------------
 
 @app.route("/audit", methods=["POST"])
 def audit():
     data = request.get_json(silent=True) or {}
+    url_input = data.get("url", "")
 
-    url = data.get("url", "").strip()
-
-    if not url:
+    if not isinstance(url_input, str) or not url_input.strip():
         return jsonify({
             "error": "Please enter a website URL."
         }), 400
 
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = normalize_url(url_input)
 
-    parsed_url = urlparse(url)
-
-    if not parsed_url.netloc:
+    if not url:
         return jsonify({
             "error": "Please enter a valid website URL."
         }), 400
@@ -330,18 +387,12 @@ def audit():
             allow_redirects=True
         )
 
-        end_time = time.perf_counter()
-
         response_time = round(
-            (end_time - start_time) * 1000,
+            (time.perf_counter() - start_time) * 1000,
             2
         )
 
-        content_type = response.headers.get(
-            "Content-Type",
-            ""
-        )
-
+        content_type = response.headers.get("Content-Type", "")
         response_size = len(response.content)
         redirect_count = len(response.history)
 
@@ -353,68 +404,39 @@ def audit():
                 "contentType": content_type
             }), 400
 
-        soup = BeautifulSoup(
-            response.text,
-            "html.parser"
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        title = (
+            soup.title.get_text(strip=True)
+            if soup.title
+            else "No Title"
         )
-
-        title = "No Title"
-
-        if soup.title and soup.title.string:
-            title = soup.title.string.strip()
 
         meta_description = soup.find(
             "meta",
             attrs={"name": "description"}
         )
 
-        description = "No Description"
-
-        if meta_description:
-            description = meta_description.get(
-                "content",
-                "No Description"
-            ).strip()
-
-        h1_count = len(soup.find_all("h1"))
-
-        page_text = soup.get_text(
-            separator=" ",
-            strip=True
+        description = (
+            meta_description.get("content", "").strip()
+            if meta_description
+            else "No Description"
         )
 
-        word_count = len(page_text.split())
-
         images = soup.find_all("img")
-        images_without_alt = 0
-
-        for image in images:
-            alt_text = image.get("alt")
-
-            if not alt_text or not alt_text.strip():
-                images_without_alt += 1
-
         links = soup.find_all("a")
-        total_links = len(links)
-        links_without_text = 0
 
-        for link in links:
-            link_text = link.get_text(strip=True)
+        images_without_alt = sum(
+            1 for image in images
+            if not image.get("alt", "").strip()
+        )
 
-            if not link_text:
-                links_without_text += 1
+        links_without_text = sum(
+            1 for link in links
+            if not link.get_text(strip=True)
+        )
 
-        headers = {
-            "contentType": content_type,
-            "server": response.headers.get(
-                "Server",
-                "Not Provided"
-            ),
-            "contentLength": response.headers.get(
-                "Content-Length",
-                str(response_size)
-            )
-        }
+        page_text = soup.get_text(separator=" ", strip=True)
 
         if 200 <= response.status_code < 300:
             status_category = "Success"
@@ -435,20 +457,27 @@ def audit():
             "responseTimeMs": response_time,
             "contentType": content_type,
             "responseSize": response_size,
-            "responseSizeKB": round(
-                response_size / 1024,
-                2
-            ),
+            "responseSizeKB": round(response_size / 1024, 2),
             "redirectCount": redirect_count,
             "title": title,
             "description": description,
-            "h1Count": h1_count,
-            "wordCount": word_count,
+            "h1Count": len(soup.find_all("h1")),
+            "wordCount": len(page_text.split()),
             "totalImages": len(images),
             "imagesWithoutAlt": images_without_alt,
-            "totalLinks": total_links,
+            "totalLinks": len(links),
             "linksWithoutText": links_without_text,
-            "headers": headers
+            "headers": {
+                "contentType": content_type,
+                "server": response.headers.get(
+                    "Server",
+                    "Not Provided"
+                ),
+                "contentLength": response.headers.get(
+                    "Content-Length",
+                    str(response_size)
+                )
+            }
         })
 
     except requests.exceptions.Timeout:
@@ -466,20 +495,16 @@ def audit():
             "error": "Invalid website URL."
         }), 400
 
-    except requests.exceptions.RequestException as error:
-        return jsonify({
-            "error": f"Website request failed: {str(error)}"
-        }), 502
+    except requests.exceptions.RequestException:
+        app.logger.exception("Website audit request failed")
 
-    except Exception:
-        app.logger.exception("Website audit failed")
         return jsonify({
-            "error": "Something went wrong while analyzing the website."
-        }), 500
+            "error": "The website request failed."
+        }), 502
 
 
 # --------------------------------------------------
-# CHECK WEBSITE STATUS
+# Monitoring checks and incidents
 # --------------------------------------------------
 
 @app.route(
@@ -506,105 +531,24 @@ def check_website(website_id):
             }
         )
 
-        end_time = time.perf_counter()
-
         response_time = round(
-            end_time - start_time,
+            time.perf_counter() - start_time,
             3
         )
 
-        response_size = len(response.content)
-
-        content_type = response.headers.get(
-            "Content-Type",
-            ""
-        )
-
-        server = response.headers.get(
-            "Server",
-            "Not Provided"
-        )
-
-        redirect_count = len(response.history)
-
+        content_type = response.headers.get("Content-Type", "")
         is_up = 200 <= response.status_code < 400
 
         check = MonitoringCheck(
             website_id=website.id,
             status_code=response.status_code,
             response_time=response_time,
-            response_size=response_size,
-            redirect_count=redirect_count,
+            response_size=len(response.content),
+            redirect_count=len(response.history),
             content_type=content_type,
-            server=server,
+            server=response.headers.get("Server", "Not Provided"),
             error_message=None,
             is_up=is_up
-        )
-
-        db.session.add(check)
-
-        if is_up:
-            open_incident = Incident.query.filter_by(
-                website_id=website.id,
-                status="OPEN"
-            ).order_by(
-                Incident.started_at.desc()
-            ).first()
-
-            if open_incident:
-                open_incident.status = "RESOLVED"
-                open_incident.resolved_at = datetime.utcnow()
-
-        else:
-            open_incident = Incident.query.filter_by(
-                website_id=website.id,
-                status="OPEN"
-            ).first()
-
-            if not open_incident:
-                incident = Incident(
-                    website_id=website.id,
-                    reason=f"HTTP status {response.status_code}",
-                    status="OPEN"
-                )
-
-                db.session.add(incident)
-
-        db.session.commit()
-
-        return jsonify({
-            "message": "Website check completed successfully.",
-            "check": {
-                "id": check.id,
-                "websiteId": website.id,
-                "statusCode": check.status_code,
-                "responseTime": check.response_time,
-                "responseSize": check.response_size,
-                "redirectCount": check.redirect_count,
-                "contentType": check.content_type,
-                "server": check.server,
-                "errorMessage": check.error_message,
-                "isUp": check.is_up,
-                "checkedAt": check.checked_at.isoformat()
-            }
-        }), 201
-
-    except requests.RequestException as error:
-        response_time = round(
-            time.perf_counter() - start_time,
-            3
-        )
-
-        check = MonitoringCheck(
-            website_id=website.id,
-            status_code=None,
-            response_time=response_time,
-            response_size=None,
-            redirect_count=0,
-            content_type=None,
-            server=None,
-            error_message=str(error),
-            is_up=False
         )
 
         db.session.add(check)
@@ -612,41 +556,86 @@ def check_website(website_id):
         open_incident = Incident.query.filter_by(
             website_id=website.id,
             status="OPEN"
+        ).order_by(
+            Incident.started_at.desc()
         ).first()
 
-        if not open_incident:
-            incident = Incident(
-                website_id=website.id,
-                reason=str(error),
-                status="OPEN"
-            )
+        if is_up:
+            if open_incident:
+                open_incident.status = "RESOLVED"
+                open_incident.resolved_at = datetime.utcnow()
 
-            db.session.add(incident)
+        elif not open_incident:
+            db.session.add(Incident(
+                website_id=website.id,
+                reason=f"HTTP status {response.status_code}",
+                status="OPEN"
+            ))
 
         db.session.commit()
 
         return jsonify({
-            "message": "Website check completed.",
-            "check": {
-                "id": check.id,
-                "websiteId": website.id,
-                "statusCode": None,
-                "responseTime": check.response_time,
-                "responseSize": None,
-                "redirectCount": check.redirect_count,
-                "contentType": None,
-                "server": None,
-                "errorMessage": check.error_message,
-                "isUp": False,
-                "checkedAt": check.checked_at.isoformat()
-            },
-            "error": str(error)
+            "message": "Website check completed successfully.",
+            "check": check_to_dict(check)
         }), 201
 
+    except requests.exceptions.RequestException as error:
+        response_time = round(
+            time.perf_counter() - start_time,
+            3
+        )
 
-# --------------------------------------------------
-# GET MONITORING CHECK HISTORY
-# --------------------------------------------------
+        try:
+            check = MonitoringCheck(
+                website_id=website.id,
+                status_code=None,
+                response_time=response_time,
+                response_size=None,
+                redirect_count=0,
+                content_type=None,
+                server=None,
+                error_message=str(error),
+                is_up=False
+            )
+
+            db.session.add(check)
+
+            open_incident = Incident.query.filter_by(
+                website_id=website.id,
+                status="OPEN"
+            ).first()
+
+            if not open_incident:
+                db.session.add(Incident(
+                    website_id=website.id,
+                    reason=str(error),
+                    status="OPEN"
+                ))
+
+            db.session.commit()
+
+            return jsonify({
+                "message": "Website check completed.",
+                "check": check_to_dict(check),
+                "error": str(error)
+            }), 201
+
+        except SQLAlchemyError:
+            db.session.rollback()
+            app.logger.exception("Could not save failed website check")
+
+            return jsonify({
+                "error": "The website request failed and its check could not be saved."
+            }), 500
+
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception("Could not save website check")
+
+        return jsonify({
+            "error": "Could not save the website check."
+        }), 500
+
 
 @app.route(
     "/api/websites/<int:website_id>/checks",
@@ -673,36 +662,18 @@ def get_website_checks(website_id):
             "url": website.url
         },
         "checks": [
-            {
-                "id": check.id,
-                "statusCode": check.status_code,
-                "responseTime": check.response_time,
-                "responseSize": check.response_size,
-                "redirectCount": check.redirect_count,
-                "contentType": check.content_type,
-                "server": check.server,
-                "errorMessage": check.error_message,
-                "isUp": check.is_up,
-                "checkedAt": check.checked_at.isoformat()
-            }
+            check_to_dict(check)
             for check in checks
         ]
     })
 
-
-# --------------------------------------------------
-# GET WEBSITE INCIDENTS
-# --------------------------------------------------
 
 @app.route(
     "/api/websites/<int:website_id>/incidents",
     methods=["GET"]
 )
 def get_website_incidents(website_id):
-    website = db.session.get(
-        Website,
-        website_id
-    )
+    website = db.session.get(Website, website_id)
 
     if not website:
         return jsonify({
@@ -739,7 +710,7 @@ def get_website_incidents(website_id):
 
 
 # --------------------------------------------------
-# ANALYZE A MONITORED WEBSITE
+# Detailed website analysis
 # --------------------------------------------------
 
 @app.route(
@@ -747,10 +718,7 @@ def get_website_incidents(website_id):
     methods=["POST"]
 )
 def analyze_monitored_website(website_id):
-    website = db.session.get(
-        Website,
-        website_id
-    )
+    website = db.session.get(Website, website_id)
 
     if not website:
         return jsonify({
@@ -767,10 +735,7 @@ def analyze_monitored_website(website_id):
             }
         )
 
-        content_type = response.headers.get(
-            "Content-Type",
-            ""
-        )
+        content_type = response.headers.get("Content-Type", "")
 
         if "text/html" not in content_type.lower():
             return jsonify({
@@ -801,20 +766,23 @@ def analyze_monitored_website(website_id):
             "error": "Could not connect to the website."
         }), 400
 
-    except requests.exceptions.RequestException as error:
+    except requests.exceptions.RequestException:
+        app.logger.exception("Website analysis request failed")
+
         return jsonify({
-            "error": f"Website request failed: {str(error)}"
+            "error": "The website request failed."
         }), 502
 
     except Exception:
         app.logger.exception("Website analysis failed")
+
         return jsonify({
             "error": "Something went wrong during website analysis."
         }), 500
 
 
 # --------------------------------------------------
-# WEBSITE ANALYTICS
+# Analytics
 # --------------------------------------------------
 
 @app.route(
@@ -822,10 +790,7 @@ def analyze_monitored_website(website_id):
     methods=["GET"]
 )
 def get_website_analytics(website_id):
-    website = db.session.get(
-        Website,
-        website_id
-    )
+    website = db.session.get(Website, website_id)
 
     if not website:
         return jsonify({
@@ -841,15 +806,13 @@ def get_website_analytics(website_id):
     total_checks = len(checks)
 
     successful_checks = sum(
-        1
-        for check in checks
-        if check.is_up
+        1 for check in checks if check.is_up
     )
 
     failed_checks = total_checks - successful_checks
 
     uptime_percentage = round(
-        (successful_checks / total_checks) * 100,
+        successful_checks / total_checks * 100,
         2
     ) if total_checks else 0
 
@@ -878,9 +841,7 @@ def get_website_analytics(website_id):
     recent_checks = checks[-5:]
 
     recent_failures = sum(
-        1
-        for check in recent_checks
-        if not check.is_up
+        1 for check in recent_checks if not check.is_up
     )
 
     total_redirects = sum(
@@ -918,13 +879,11 @@ def get_website_analytics(website_id):
             "averageResponseSize": average_response_size,
             "latestResponseTime": (
                 latest_check.response_time
-                if latest_check
-                else None
+                if latest_check else None
             ),
             "latestStatusCode": (
                 latest_check.status_code
-                if latest_check
-                else None
+                if latest_check else None
             ),
             "recentFailures": recent_failures,
             "totalRedirects": total_redirects,
@@ -950,11 +909,12 @@ def get_website_analytics(website_id):
 
 
 # --------------------------------------------------
-# LOCAL DEVELOPMENT
-# Vercel imports app.py and does not execute this block.
+# Local development only
 # --------------------------------------------------
 
 if __name__ == "__main__":
+    # Create tables locally, once when launching the development app.
+    # Do not run schema creation on every Vercel request.
     with app.app_context():
         db.create_all()
 
@@ -962,5 +922,6 @@ if __name__ == "__main__":
 
     app.run(
         debug=False,
+        host="127.0.0.1",
         port=5000
     )

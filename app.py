@@ -1,12 +1,14 @@
 
-from flask import Flask, render_template, request, jsonify
-import requests
-import time
 import os
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+import time
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlparse
+
+import requests
+from bs4 import BeautifulSoup
+from flask import Flask, render_template, request, jsonify
+
 from extensions import db
 from services.website_analyzer import analyze_website
 from scheduler import start_scheduler
@@ -14,21 +16,33 @@ from scheduler import start_scheduler
 
 app = Flask(__name__)
 
+# --------------------------------------------------
+# DATABASE CONFIGURATION
+# PostgreSQL (Neon) on Vercel
+# SQLite for local development
+# --------------------------------------------------
+
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = BASE_DIR / "pagepulse.db"
 
 database_url = os.environ.get("DATABASE_URL", "").strip()
 
-
 if database_url:
+    # Explicitly select psycopg2 so SQLAlchemy does not
+    # attempt to import the missing psycopg (version 3) driver.
     if database_url.startswith("postgres://"):
         database_url = database_url.replace(
             "postgres://",
-            "postgresql://",
+            "postgresql+psycopg2://",
             1
         )
-
-    if database_url.startswith("postgresql://"):
+    elif database_url.startswith("postgresql+psycopg://"):
+        database_url = database_url.replace(
+            "postgresql+psycopg://",
+            "postgresql+psycopg2://",
+            1
+        )
+    elif database_url.startswith("postgresql://"):
         database_url = database_url.replace(
             "postgresql://",
             "postgresql+psycopg2://",
@@ -45,11 +59,16 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db.init_app(app)
 
+
+# Import models after initializing the SQLAlchemy extension.
 from models.website import Website
 from models.monitoring import MonitoringCheck
 from models.incident import Incident
 
 
+# Initialize tables on the first request handled by this process.
+# This is important because Vercel imports the Flask app without
+# executing the __main__ section.
 _database_initialized = False
 
 
@@ -62,10 +81,18 @@ def initialize_database():
         _database_initialized = True
 
 
+# --------------------------------------------------
+# HOME
+# --------------------------------------------------
+
 @app.route("/")
 def home():
     return render_template("index.html")
 
+
+# --------------------------------------------------
+# CREATE WEBSITE
+# --------------------------------------------------
 
 @app.route("/api/websites", methods=["POST"])
 def create_website():
@@ -94,7 +121,9 @@ def create_website():
             "error": "Please enter a valid website URL."
         }), 400
 
-    existing_website = Website.query.filter_by(url=url).first()
+    existing_website = Website.query.filter_by(
+        url=url
+    ).first()
 
     if existing_website:
         return jsonify({
@@ -121,6 +150,10 @@ def create_website():
     }), 201
 
 
+# --------------------------------------------------
+# GET ALL WEBSITES
+# --------------------------------------------------
+
 @app.route("/api/websites", methods=["GET"])
 def get_websites():
     websites = Website.query.order_by(
@@ -141,7 +174,14 @@ def get_websites():
     })
 
 
-@app.route("/api/websites/<int:website_id>", methods=["GET"])
+# --------------------------------------------------
+# GET ONE WEBSITE
+# --------------------------------------------------
+
+@app.route(
+    "/api/websites/<int:website_id>",
+    methods=["GET"]
+)
 def get_website(website_id):
     website = db.session.get(Website, website_id)
 
@@ -161,7 +201,14 @@ def get_website(website_id):
     })
 
 
-@app.route("/api/websites/<int:website_id>", methods=["DELETE"])
+# --------------------------------------------------
+# DELETE WEBSITE
+# --------------------------------------------------
+
+@app.route(
+    "/api/websites/<int:website_id>",
+    methods=["DELETE"]
+)
 def delete_website(website_id):
     website = db.session.get(Website, website_id)
 
@@ -178,7 +225,14 @@ def delete_website(website_id):
     })
 
 
-@app.route("/api/websites/<int:website_id>", methods=["PUT"])
+# --------------------------------------------------
+# UPDATE WEBSITE
+# --------------------------------------------------
+
+@app.route(
+    "/api/websites/<int:website_id>",
+    methods=["PUT"]
+)
 def update_website(website_id):
     website = db.session.get(Website, website_id)
 
@@ -238,6 +292,10 @@ def update_website(website_id):
         }
     })
 
+
+# --------------------------------------------------
+# WEBSITE AUDIT
+# --------------------------------------------------
 
 @app.route("/audit", methods=["POST"])
 def audit():
@@ -328,7 +386,6 @@ def audit():
         word_count = len(page_text.split())
 
         images = soup.find_all("img")
-
         images_without_alt = 0
 
         for image in images:
@@ -338,15 +395,11 @@ def audit():
                 images_without_alt += 1
 
         links = soup.find_all("a")
-
         total_links = len(links)
-
         links_without_text = 0
 
         for link in links:
-            link_text = link.get_text(
-                strip=True
-            )
+            link_text = link.get_text(strip=True)
 
             if not link_text:
                 links_without_text += 1
@@ -419,12 +472,20 @@ def audit():
         }), 502
 
     except Exception:
+        app.logger.exception("Website audit failed")
         return jsonify({
             "error": "Something went wrong while analyzing the website."
         }), 500
 
 
-@app.route("/api/websites/<int:website_id>/check", methods=["POST"])
+# --------------------------------------------------
+# CHECK WEBSITE STATUS
+# --------------------------------------------------
+
+@app.route(
+    "/api/websites/<int:website_id>/check",
+    methods=["POST"]
+)
 def check_website(website_id):
     website = db.session.get(Website, website_id)
 
@@ -453,6 +514,7 @@ def check_website(website_id):
         )
 
         response_size = len(response.content)
+
         content_type = response.headers.get(
             "Content-Type",
             ""
@@ -528,10 +590,8 @@ def check_website(website_id):
         }), 201
 
     except requests.RequestException as error:
-        end_time = time.perf_counter()
-
         response_time = round(
-            end_time - start_time,
+            time.perf_counter() - start_time,
             3
         )
 
@@ -584,6 +644,10 @@ def check_website(website_id):
         }), 201
 
 
+# --------------------------------------------------
+# GET MONITORING CHECK HISTORY
+# --------------------------------------------------
+
 @app.route(
     "/api/websites/<int:website_id>/checks",
     methods=["GET"]
@@ -625,6 +689,10 @@ def get_website_checks(website_id):
         ]
     })
 
+
+# --------------------------------------------------
+# GET WEBSITE INCIDENTS
+# --------------------------------------------------
 
 @app.route(
     "/api/websites/<int:website_id>/incidents",
@@ -669,6 +737,10 @@ def get_website_incidents(website_id):
         ]
     })
 
+
+# --------------------------------------------------
+# ANALYZE A MONITORED WEBSITE
+# --------------------------------------------------
 
 @app.route(
     "/api/websites/<int:website_id>/analyze",
@@ -735,10 +807,15 @@ def analyze_monitored_website(website_id):
         }), 502
 
     except Exception:
+        app.logger.exception("Website analysis failed")
         return jsonify({
             "error": "Something went wrong during website analysis."
         }), 500
 
+
+# --------------------------------------------------
+# WEBSITE ANALYTICS
+# --------------------------------------------------
 
 @app.route(
     "/api/websites/<int:website_id>/analytics",
@@ -772,10 +849,7 @@ def get_website_analytics(website_id):
     failed_checks = total_checks - successful_checks
 
     uptime_percentage = round(
-        (
-            successful_checks /
-            total_checks
-        ) * 100,
+        (successful_checks / total_checks) * 100,
         2
     ) if total_checks else 0
 
@@ -792,18 +866,15 @@ def get_website_analytics(website_id):
     ]
 
     average_response_time = round(
-        sum(response_times) /
-        len(response_times),
+        sum(response_times) / len(response_times),
         3
     ) if response_times else 0
 
     average_response_size = round(
-        sum(response_sizes) /
-        len(response_sizes)
+        sum(response_sizes) / len(response_sizes)
     ) if response_sizes else 0
 
     latest_check = checks[-1] if checks else None
-
     recent_checks = checks[-5:]
 
     recent_failures = sum(
@@ -821,9 +892,7 @@ def get_website_analytics(website_id):
         health_score = 0
         health_status = "No Data"
     else:
-        health_score = round(
-            uptime_percentage
-        )
+        health_score = round(uptime_percentage)
 
         if health_score >= 90:
             health_status = "Excellent"
@@ -879,6 +948,11 @@ def get_website_analytics(website_id):
         ]
     })
 
+
+# --------------------------------------------------
+# LOCAL DEVELOPMENT
+# Vercel imports app.py and does not execute this block.
+# --------------------------------------------------
 
 if __name__ == "__main__":
     with app.app_context():
